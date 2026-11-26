@@ -21,6 +21,7 @@ import android.app.Application;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.Build;
+import android.util.Log;
 import android.view.textservice.SentenceSuggestionsInfo;
 import android.view.textservice.SuggestionsInfo;
 import android.view.textservice.TextInfo;
@@ -96,8 +97,8 @@ public class SentenceLevelAdapter {
                     if (Constants.CODE_PERIOD == codePoint) {
                         final int indexOfNextCodePoint =
                                 index + Character.charCount(Constants.CODE_PERIOD);
-                        if (indexOfNextCodePoint < length
-                                && mSpacingAndPunctuations.isWordSeparator(
+                        if (indexOfNextCodePoint >= length
+                                || mSpacingAndPunctuations.isWordSeparator(
                                         Character.codePointAt(sequence, indexOfNextCodePoint))) {
                             return index;
                         }
@@ -133,6 +134,7 @@ public class SentenceLevelAdapter {
     }
 
     public SentenceTextInfoParams getSplitWords(TextInfo originalTextInfo) {
+        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.getSplitWords() entry");
         final WordIterator wordIterator = mWordIterator;
         final CharSequence originalText =
                 TextInfoCompatUtils.getCharSequenceOrString(originalTextInfo);
@@ -154,16 +156,21 @@ public class SentenceLevelAdapter {
             }
             wordEnd = wordIterator.getEndOfWord(originalText, wordStart);
         }
-        return new SentenceTextInfoParams(originalTextInfo, wordItems);
+        SentenceTextInfoParams params = new SentenceTextInfoParams(originalTextInfo, wordItems);
+        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.getSplitWords() exit itemsCount=" + params.mItems.size());
+        return params;
     }
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
     public static SentenceSuggestionsInfo reconstructSuggestions(
             SentenceTextInfoParams originalTextInfoParams, SuggestionsInfo[] results) {
+        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() entry");
         if (results == null || results.length == 0) {
+            Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit (results null/empty)");
             return null;
         }
         if (originalTextInfoParams == null) {
+            Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit (params null)");
             return null;
         }
         final int originalCookie = originalTextInfoParams.mOriginalTextInfo.getCookie();
@@ -189,6 +196,8 @@ public class SentenceLevelAdapter {
             lengths[i] = item.mLength;
             reconstructedSuggestions[i] = result != null ? result : EMPTY_SUGGESTIONS_INFO;
         }
-        return new SentenceSuggestionsInfo(reconstructedSuggestions, offsets, lengths);
+        SentenceSuggestionsInfo ssi = new SentenceSuggestionsInfo(reconstructedSuggestions, offsets, lengths);
+        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit count=" + querySize);
+        return ssi;
     }
 }

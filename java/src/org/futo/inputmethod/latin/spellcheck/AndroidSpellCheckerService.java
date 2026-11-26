@@ -19,10 +19,14 @@ package org.futo.inputmethod.latin.spellcheck;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.service.textservice.SpellCheckerService;
+import android.util.Log;
 import android.view.inputmethod.InputMethodSubtype;
 import android.view.textservice.SuggestionsInfo;
 
 import org.futo.inputmethod.keyboard.Keyboard;
+import org.futo.inputmethod.keyboard.internal.KeyboardLayoutElement;
+import org.futo.inputmethod.keyboard.internal.KeyboardLayoutKind;
+import org.futo.inputmethod.keyboard.internal.KeyboardLayoutPage;
 import org.futo.inputmethod.latin.DictionaryFacilitator;
 import org.futo.inputmethod.latin.DictionaryFacilitatorLruCache;
 import org.futo.inputmethod.latin.NgramContext;
@@ -89,6 +93,8 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     @Override
     public void onCreate() {
         super.onCreate();
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onCreate()");
+        org.futo.inputmethod.v2keyboard.LayoutManager.INSTANCE.init(this);
         mRecommendedThreshold = Float.parseFloat(
                 getString(R.string.spellchecker_recommended_threshold_value));
         final SharedPreferences prefs = PreferenceUtils.INSTANCE.getDefaultSharedPreferences(this);
@@ -131,6 +137,7 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     public Session createSession() {
         // Should not refer to AndroidSpellCheckerSession directly considering
         // that AndroidSpellCheckerSession may be overlaid.
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.createSession()");
         return AndroidSpellCheckerSessionFactory.newInstance(this);
     }
 
@@ -154,10 +161,14 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     }
 
     public boolean isValidWord(final Locale locale, final String word) {
+        return isValidWord(Collections.singletonList(locale), word);
+    }
+
+    public boolean isValidWord(final java.util.List<Locale> locales, final String word) {
         mSemaphore.acquireUninterruptibly();
         try {
             DictionaryFacilitator dictionaryFacilitatorForLocale =
-                    mDictionaryFacilitatorCache.get(Collections.singletonList(locale));
+                    mDictionaryFacilitatorCache.get(locales);
             return dictionaryFacilitatorForLocale.isValidSpellingWord(word);
         } finally {
             mSemaphore.release();
@@ -167,12 +178,18 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     public SuggestionResults getSuggestionResults(final Locale locale,
             final ComposedData composedData, final NgramContext ngramContext,
             @Nonnull final Keyboard keyboard) {
+        return getSuggestionResults(Collections.singletonList(locale), composedData, ngramContext, keyboard);
+    }
+
+    public SuggestionResults getSuggestionResults(final java.util.List<Locale> locales,
+            final ComposedData composedData, final NgramContext ngramContext,
+            @Nonnull final Keyboard keyboard) {
         Integer sessionId = null;
         mSemaphore.acquireUninterruptibly();
         try {
             sessionId = mSessionIdPool.poll();
             DictionaryFacilitator dictionaryFacilitatorForLocale =
-                    mDictionaryFacilitatorCache.get(Collections.singletonList(locale));
+                    mDictionaryFacilitatorCache.get(locales);
             return dictionaryFacilitatorForLocale.getSuggestionResults(composedData, ngramContext,
                     keyboard, mSettingsValuesForSuggestion,
                     sessionId, SuggestedWords.INPUT_STYLE_TYPING);
@@ -185,11 +202,16 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     }
 
     public boolean hasMainDictionaryForLocale(final Locale locale) {
+        return hasMainDictionaryForLocales(Collections.singletonList(locale));
+    }
+
+    public boolean hasMainDictionaryForLocales(final java.util.List<Locale> locales) {
         mSemaphore.acquireUninterruptibly();
         try {
             final DictionaryFacilitator dictionaryFacilitator =
-                    mDictionaryFacilitatorCache.get(Collections.singletonList(locale));
-            return dictionaryFacilitator.hasAtLeastOneInitializedMainDictionary();
+                    mDictionaryFacilitatorCache.get(locales);
+            return dictionaryFacilitator.hasAtLeastOneInitializedMainDictionary() &&
+                    !dictionaryFacilitator.hasAtLeastOneUninitializedMainDictionary();
         } finally {
             mSemaphore.release();
         }
@@ -197,6 +219,7 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
 
     @Override
     public boolean onUnbind(final Intent intent) {
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onUnbind()");
         mSemaphore.acquireUninterruptibly(MAX_NUM_OF_THREADS_READ_DICTIONARY);
         try {
             mDictionaryFacilitatorCache.closeDictionaries();
@@ -219,12 +242,40 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     }
 
     private Keyboard createKeyboardForLocale(final Locale locale) {
-        final String keyboardLayoutName = getKeyboardLayoutNameForLocale(locale);
-        final InputMethodSubtype subtype = AdditionalSubtypeUtils.createDummyAdditionalSubtype(
-                locale.toString(), keyboardLayoutName);
-        throw new UnsupportedOperationException("TODO: Implement");
-        //final KeyboardLayoutSet keyboardLayoutSet = createKeyboardSetForSpellChecker(subtype);
-        //return keyboardLayoutSet.getKeyboard(KeyboardId.ELEMENT_ALPHABET);
+        String layoutName = "qwerty";
+        try {
+            java.util.List<String> layouts = org.futo.inputmethod.latin.Subtypes.INSTANCE.findClosestLocaleLayouts(this, locale);
+            if (layouts != null && !layouts.isEmpty()) {
+                layoutName = layouts.get(0);
+            }
+        } catch (Exception ignored) {}
+
+        final android.view.inputmethod.EditorInfo editorInfo = new android.view.inputmethod.EditorInfo();
+        editorInfo.inputType = android.text.InputType.TYPE_CLASS_TEXT;
+
+        final org.futo.inputmethod.v2keyboard.KeyboardLayoutSetV2Params params =
+                new org.futo.inputmethod.v2keyboard.KeyboardLayoutSetV2Params(
+                        new org.futo.inputmethod.v2keyboard.RegularKeyboardSize(
+                                SPELLCHECKER_DUMMY_KEYBOARD_WIDTH, SPELLCHECKER_DUMMY_KEYBOARD_HEIGHT,
+                                new android.graphics.Rect(0, 0, 0, 0),
+                                SPELLCHECKER_DUMMY_KEYBOARD_HEIGHT / 4
+                        ),
+                        layoutName,
+                        locale,
+                        null,
+                        editorInfo,
+                        false, 0, true, false, false, 4.0f, null, null
+                );
+
+        final org.futo.inputmethod.v2keyboard.KeyboardLayoutSetV2 layoutSet =
+                new org.futo.inputmethod.v2keyboard.KeyboardLayoutSetV2(this, params);
+
+        return layoutSet.getKeyboard(
+                new KeyboardLayoutElement(
+                        KeyboardLayoutKind.Alphabet0,
+                        KeyboardLayoutPage.Base
+                )
+        );
     }
 
     /*private KeyboardLayoutSet createKeyboardSetForSpellChecker(final InputMethodSubtype subtype) {

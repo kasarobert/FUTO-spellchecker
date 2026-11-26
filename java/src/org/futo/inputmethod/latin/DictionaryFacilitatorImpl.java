@@ -118,9 +118,9 @@ public class DictionaryFacilitatorImpl implements DictionaryFacilitator {
 
     @Override
     public boolean isForLocales(final List<Locale> locales) {
-        if(locales.size() != mDictionaryGroups.size()) return false;
-        for(int i=0; i<locales.size(); i++) {
-            if(locales.get(i) != mDictionaryGroups.get(i).mLocale) return false;
+        if (locales == null || locales.size() != mDictionaryGroups.size()) return false;
+        for (int i = 0; i < locales.size(); i++) {
+            if (!java.util.Objects.equals(locales.get(i), mDictionaryGroups.get(i).mLocale)) return false;
         }
 
         return true;
@@ -128,8 +128,8 @@ public class DictionaryFacilitatorImpl implements DictionaryFacilitator {
 
     //@Override
     public boolean isForLocale(final Locale locale) {
-        for(int i=0; i<mDictionaryGroups.size(); i++) {
-            if(locale == mDictionaryGroups.get(i).mLocale) return true;
+        for (int i = 0; i < mDictionaryGroups.size(); i++) {
+            if (java.util.Objects.equals(locale, mDictionaryGroups.get(i).mLocale)) return true;
         }
 
         return false;
@@ -938,14 +938,19 @@ public class DictionaryFacilitatorImpl implements DictionaryFacilitator {
     }
 
     public boolean isValidSpellingWord(final String word) {
+        boolean result;
         if (mValidSpellingWordReadCache != null) {
             final Boolean cachedValue = mValidSpellingWordReadCache.get(word);
             if (cachedValue != null) {
-                return cachedValue;
+                result = cachedValue;
+                Log.i("FUTO_SPELLCHECKER", "DictionaryFacilitator.isValidSpellingWord() cached -> " + result + " (hasInitDict=" + hasAtLeastOneInitializedMainDictionary() + ")");
+                return result;
             }
         }
 
-        return isValidWord(word, ALL_DICTIONARY_TYPES);
+        result = isValidWord(word, ALL_DICTIONARY_TYPES);
+        Log.i("FUTO_SPELLCHECKER", "DictionaryFacilitator.isValidSpellingWord() -> " + result + " (hasInitDict=" + hasAtLeastOneInitializedMainDictionary() + ")");
+        return result;
     }
 
     public boolean isValidSuggestionWord(final String word) {
@@ -1095,12 +1100,14 @@ public class DictionaryFacilitatorImpl implements DictionaryFacilitator {
     }
 
     private boolean areBadWordsAllowed() {
-        return !Settings.getInstance().getCurrent().mBlockPotentiallyOffensive;
+        final SettingsValues currentSettings = Settings.getInstance().getCurrent();
+        return currentSettings == null || !currentSettings.mBlockPotentiallyOffensive;
     }
 
     @Override
     public void updateSwipeLayoutAndDictsIfNeeded(SettingsValues values, Keyboard keyboard) {
-        if(swipeDecoderDictionary == null) return;
+        if (values == null) return;
+        if (swipeDecoderDictionary == null) return;
 
         // TODO: This could be more optimized by avoiding unnecessary recreations when
         //  isMultiLine is changed, or something else trivial has changed. Maybe also cache the

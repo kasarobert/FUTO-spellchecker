@@ -42,6 +42,7 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
 
     public AndroidSpellCheckerSession(AndroidSpellCheckerService service) {
         super(service);
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.<init>");
         mContext = service;
     }
 
@@ -127,8 +128,10 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
     @Override
     public SentenceSuggestionsInfo[] onGetSentenceSuggestionsMultiple(TextInfo[] textInfos,
             int suggestionsLimit) {
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() entry count=" + (textInfos != null ? textInfos.length : 0));
         final SentenceSuggestionsInfo[] retval = splitAndSuggest(textInfos, suggestionsLimit);
         if (retval == null || retval.length != textInfos.length) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() exit (null or mismatched length)");
             return retval;
         }
         for (int i = 0; i < retval.length; ++i) {
@@ -138,6 +141,7 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
                 retval[i] = tempSsi;
             }
         }
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() exit count=" + retval.length);
         return retval;
     }
 
@@ -156,7 +160,9 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
      * {@link android.service.textservice.SpellCheckerService.Session#onGetSuggestions(TextInfo, int)}
      */
     private SentenceSuggestionsInfo[] splitAndSuggest(TextInfo[] textInfos, int suggestionsLimit) {
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() entry count=" + (textInfos != null ? textInfos.length : 0));
         if (textInfos == null || textInfos.length == 0) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() early return: empty textInfos");
             return SentenceLevelAdapter.getEmptySentenceSuggestionsInfo();
         }
         SentenceLevelAdapter sentenceLevelAdapter;
@@ -172,6 +178,7 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
             }
         }
         if (sentenceLevelAdapter == null) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() early return: sentenceLevelAdapter is null");
             return SentenceLevelAdapter.getEmptySentenceSuggestionsInfo();
         }
         final int infosSize = textInfos.length;
@@ -190,12 +197,14 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
                     textInfoParams, onGetSuggestionsMultiple(
                             splitTextInfos, suggestionsLimit, true));
         }
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() exit count=" + retval.length);
         return retval;
     }
 
     @Override
     public SuggestionsInfo[] onGetSuggestionsMultiple(TextInfo[] textInfos,
             int suggestionsLimit, boolean sequentialWords) {
+        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSuggestionsMultiple() entry count=" + (textInfos != null ? textInfos.length : 0) + ", sequential=" + sequentialWords);
         long ident = Binder.clearCallingIdentity();
         try {
             final int length = textInfos.length;

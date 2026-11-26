@@ -308,7 +308,7 @@ class SwipeDecoderDictionary(val context: Context, val locale: Locale) : Diction
 
         @JvmStatic
         fun canBeUsed(): Boolean {
-            val settings = Settings.getInstance().current
+            val settings = Settings.getInstance().current ?: return false
             if(!settings.mGestureInputEnabled) {
                 Log.d("SwipeDecoderDictionary", "Inactive because gesture input is disabled.")
                 return false
