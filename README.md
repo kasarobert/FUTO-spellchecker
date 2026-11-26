@@ -2,6 +2,10 @@
 
 This fork of [FUTO Keyboard](https://github.com/futo-org/android-keyboard) aims to extend its existing spelling correction functionality by integrating it with Android's system-wide spellchecking framework.
 
+## AI usage
+
+This fork was mainly made by various AI agents, was not tested thoroughly, and was mainly made for myself.
+
 ## Goals
 
 - **System-wide spellchecking:** Implement Android's `SpellCheckerService` to enable red underlines beneath misspelled words in supported text fields across Android applications.
