@@ -1,64 +1,15 @@
-# FUTO spellcheck
+# FUTO Keyboard – System Spellchecker
 
-Adding spellchecker functionality that highlights the misspelled words with red underline. Mostly vibe-coded project.
+This fork of [FUTO Keyboard](https://github.com/futo-org/android-keyboard) aims to extend its existing spelling correction functionality by integrating it with Android's system-wide spellchecking framework.
 
-## FUTO Keyboard
+## Goals
 
-The goal is to make a good modern keyboard that stays offline and doesn't spy on you. This keyboard is a fork of [LatinIME, The Android Open-Source Keyboard](https://android.googlesource.com/platform/packages/inputmethods/LatinIME), with significant changes made to it.
+- **System-wide spellchecking:** Implement Android's `SpellCheckerService` to enable red underlines beneath misspelled words in supported text fields across Android applications.
+- **Multilingual support:** Follow the languages configured in FUTO Keyboard, including support for simultaneous spellchecking across multiple selected languages.
+- **Modular implementation:** Keep the spellchecker implementation isolated within its own package to simplify maintenance and potential integration into future FUTO Keyboard versions.
 
-Check out the [FUTO Keyboard website](https://keyboard.futo.tech/) for downloads and more information.
+## Motivation
 
-The code is licensed under the [FUTO Source First License 1.1](LICENSE.md).
+FUTO Keyboard already provides spelling correction suggestions but does not natively expose its spelling engine as an Android system spellchecker. Consequently, misspelled words are not highlighted with the standard red underline in applications that rely on Android's spellchecking framework.
 
-## Nightly builds
-
-Usually, a build close to the current master is available at [https://dl.keyboard.futo.org/nightly.apk](https://dl.keyboard.futo.org/nightly.apk). Read more about it here: https://docs.keyboard.futo.tech/improvements/nightly
-
-The "Check for updates manually" button in the nightly build will check against the latest nightly, allowing you to get updated this way. It's recommended to check it once immediately after first installation in case an older version got downloaded due to CDN cache.
-
-## Issue tracking and contributing
-
-Please check the GitHub repository to report issues: [https://github.com/futo-org/android-keyboard/](https://github.com/futo-org/android-keyboard/)
-
-The source code is hosted on our [internal GitLab](https://gitlab.futo.org/keyboard/latinime) and mirrored to [GitHub](https://github.com/futo-org/android-keyboard/). As registration is closed on our internal GitLab, we use GitHub instead for issues and pull requests.
-
-If you want to help translate the app, please do so via our Pontoon instance: https://i18n-keyboard.futo.org/
-
-Due to custom license, pull requests to this repository require signing a [CLA](https://cla.futo.org/) which you can do after opening a PR. Contributions to the [layouts repo](https://github.com/futo-org/futo-keyboard-layouts) don't require CLA as they're Apache-2.0
-
-Please do not submit AI-generated pull requests, as these tend to make the codebase more difficult to understand. Pull requests made with clear heavy use of AI may be closed without comment. Please also avoid using AI to write issues, and try to explain it in your own words instead.
-
-## Layouts
-
-If you want to contribute layouts, check out the [layouts repo](https://github.com/futo-org/futo-keyboard-layouts).
-
-## Building
-
-When cloning the repository, you must perform a recursive clone to fetch all dependencies:
-```
-git clone --recursive https://gitlab.futo.org/keyboard/latinime.git
-```
-
-If you forgot to specify recursive clone, use this to fetch submodules:
-```
-git submodule update --init --recursive
-```
-
-You can then open the project in Android Studio and build it that way, or use gradle commands:
-```
-./gradlew assembleUnstableDebug
-./gradlew assembleStableRelease
-```
-
-## APK signing
-
-For official FUTO Keyboard versions, you can verify the APK's signing key fingerprint for integrity.
-
-```
-Signing key fingerprint for all versions except Google Play:
-
-MD5: 3A:BB:71:C6:BB:E4:92:27:B1:E3:5D:81:01:48:6A:B0
-SHA1: 5D:15:B3:6E:C9:6A:96:28:41:09:DD:62:93:0D:9C:39:9F:5F:06:43
-SHA-256: 74:3F:AD:58:64:AB:C4:26:50:0B:2D:C2:C4:7C:8A:D3:24:CB:CD:16:03:3F:80:16:99:48:41:35:63:74:F9:95
-
-```
+This fork addresses that limitation by connecting FUTO's existing dictionary infrastructure to Android's `SpellCheckerService` API.
