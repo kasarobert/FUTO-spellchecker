@@ -20,7 +20,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.service.textservice.SpellCheckerService;
 import android.util.Log;
-import android.view.inputmethod.InputMethodSubtype;
 import android.view.textservice.SuggestionsInfo;
 
 import org.futo.inputmethod.keyboard.Keyboard;
@@ -33,9 +32,9 @@ import org.futo.inputmethod.latin.NgramContext;
 import org.futo.inputmethod.latin.R;
 import org.futo.inputmethod.latin.SuggestedWords;
 import org.futo.inputmethod.latin.common.ComposedData;
+import org.futo.inputmethod.latin.define.DebugFlags;
 import org.futo.inputmethod.latin.settings.SettingsValuesForSuggestion;
 import org.futo.inputmethod.latin.uix.PreferenceUtils;
-import org.futo.inputmethod.latin.utils.AdditionalSubtypeUtils;
 import org.futo.inputmethod.latin.utils.ScriptUtils;
 import org.futo.inputmethod.latin.utils.SuggestionResults;
 
@@ -50,10 +49,23 @@ import javax.annotation.Nonnull;
 /**
  * Service for spell checking, using LatinIME's dictionaries and mechanisms.
  */
+
+/**
+ * System-level Android {@link SpellCheckerService} implementation for FUTO Keyboard.
+ *
+ * Why this extends Android's SpellCheckerService:
+ * Android's TextServicesManager framework binds to services declaring the action
+ * `android.service.textservice.SpellCheckerService` in AndroidManifest.xml.
+ * When the user selects FUTO as the system spellchecker in Android Settings, Android OS
+ * manages binding, IPC dispatching, and session creation through this service.
+ *
+ * Reusing FUTO's DictionaryEngine:
+ * Rather than creating a separate dictionary infrastructure, this service reuses FUTO's
+ * {@link DictionaryFacilitatorLruCache} and {@link DictionaryFacilitator} instances.
+ */
 public final class AndroidSpellCheckerService extends SpellCheckerService
         implements SharedPreferences.OnSharedPreferenceChangeListener {
     private static final String TAG = AndroidSpellCheckerService.class.getSimpleName();
-    private static final boolean DEBUG = false;
 
     public static final String PREF_USE_CONTACTS_KEY = "pref_spellcheck_use_contacts";
 
@@ -93,7 +105,10 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     @Override
     public void onCreate() {
         super.onCreate();
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onCreate()");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onCreate()");
+        }
+        // Initialize FUTO Keyboard's LayoutManager so dummy spellchecker keyboards can be built.
         org.futo.inputmethod.v2keyboard.LayoutManager.INSTANCE.init(this);
         mRecommendedThreshold = Float.parseFloat(
                 getString(R.string.spellchecker_recommended_threshold_value));
@@ -106,26 +121,6 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
         return mRecommendedThreshold;
     }
 
-    private static String getKeyboardLayoutNameForLocale(final Locale locale) {
-        // See b/19963288.
-        if (locale.getLanguage().equals("sr")) {
-            return "south_slavic";
-        }
-        final int script = ScriptUtils.getScriptFromSpellCheckerLocale(locale);
-        switch (script) {
-        case ScriptUtils.SCRIPT_LATIN:
-            return "qwerty";
-        case ScriptUtils.SCRIPT_CYRILLIC:
-            return "east_slavic";
-        case ScriptUtils.SCRIPT_GREEK:
-            return "greek";
-        case ScriptUtils.SCRIPT_HEBREW:
-            return "hebrew";
-        default:
-            throw new RuntimeException("Wrong script supplied: " + script);
-        }
-    }
-
     @Override
     public void onSharedPreferenceChanged(final SharedPreferences prefs, final String key) {
         if (!PREF_USE_CONTACTS_KEY.equals(key)) return;
@@ -133,11 +128,17 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
         mDictionaryFacilitatorCache.setUseContactsDictionary(useContactsDictionary);
     }
 
+    /**
+     * Factory entry point invoked by Android OS when a client application (e.g. TextView / Editor)
+     * requests a new spellchecker session.
+     */
     @Override
     public Session createSession() {
         // Should not refer to AndroidSpellCheckerSession directly considering
         // that AndroidSpellCheckerSession may be overlaid.
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.createSession()");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.createSession()");
+        }
         return AndroidSpellCheckerSessionFactory.newInstance(this);
     }
 
@@ -152,7 +153,7 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     }
 
     /**
-     * Returns an empty suggestionInfo with flags signaling the word is in the dictionary.
+     * Returns an empty SuggestionsInfo with flags signaling the word is in the dictionary.
      * @return the empty SuggestionsInfo with the appropriate flags set.
      */
     public static SuggestionsInfo getInDictEmptySuggestions() {
@@ -219,7 +220,9 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
 
     @Override
     public boolean onUnbind(final Intent intent) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onUnbind()");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerService.onUnbind()");
+        }
         mSemaphore.acquireUninterruptibly(MAX_NUM_OF_THREADS_READ_DICTIONARY);
         try {
             mDictionaryFacilitatorCache.closeDictionaries();
@@ -277,16 +280,4 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
                 )
         );
     }
-
-    /*private KeyboardLayoutSet createKeyboardSetForSpellChecker(final InputMethodSubtype subtype) {
-        final EditorInfo editorInfo = new EditorInfo();
-        editorInfo.inputType = InputType.TYPE_CLASS_TEXT;
-        final KeyboardLayoutSet.Builder builder = new KeyboardLayoutSet.Builder(this, editorInfo);
-        builder.setKeyboardGeometry(
-                SPELLCHECKER_DUMMY_KEYBOARD_WIDTH, SPELLCHECKER_DUMMY_KEYBOARD_HEIGHT);
-        builder.setSubtype(RichInputMethodSubtype.getRichInputMethodSubtype(subtype));
-        builder.setIsSpellChecker(true);
-        builder.disableTouchPositionCorrectionData();
-        return builder.build();
-    }*/
 }

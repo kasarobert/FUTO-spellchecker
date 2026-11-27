@@ -72,11 +72,7 @@
         <activity android:name=".spellcheck.SpellCheckerDiagnosticActivity"
              android:label="Spell Checker Diagnostics"
              android:theme="@style/Theme.AppCompat.DayNight"
-             android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-            </intent-filter>
-        </activity>
+             android:exported="false" />
 
         <activity android:name=".uix.settings.SettingsActivity"
              android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"

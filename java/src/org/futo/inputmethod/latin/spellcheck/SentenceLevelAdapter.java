@@ -17,9 +17,7 @@
 package org.futo.inputmethod.latin.spellcheck;
 
 import android.annotation.TargetApi;
-import android.app.Application;
 import android.content.Context;
-import android.content.res.Resources;
 import android.os.Build;
 import android.util.Log;
 import android.view.textservice.SentenceSuggestionsInfo;
@@ -28,8 +26,8 @@ import android.view.textservice.TextInfo;
 
 import org.futo.inputmethod.compat.TextInfoCompatUtils;
 import org.futo.inputmethod.latin.common.Constants;
+import org.futo.inputmethod.latin.define.DebugFlags;
 import org.futo.inputmethod.latin.settings.SpacingAndPunctuations;
-import org.futo.inputmethod.latin.utils.RunInLocale;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -38,6 +36,22 @@ import java.util.Locale;
  * This code is mostly lifted directly from android.service.textservice.SpellCheckerService in
  * the framework; maybe that should be protected instead, so that implementers don't have to
  * rewrite everything for any small change.
+ */
+
+/**
+ * Adapter responsible for converting sentence-level Android spellchecking requests into word-level queries.
+ *
+ * How Offset and Length Calculations Work:
+ * Android's TextView requires {@link SentenceSuggestionsInfo} containing character offsets and lengths
+ * relative to the original queried text.
+ * 1. {@link #getSplitWords(TextInfo)} uses a word iterator to split the sentence into word tokens.
+ * 2. Each token stores its precise start index (`mStart`) and character length (`mLength`).
+ * 3. {@link #reconstructSuggestions(SentenceTextInfoParams, SuggestionsInfo[])} maps word-level
+ *    spellchecking results back to the original token offsets and lengths.
+ *
+ * Trailing Punctuation:
+ * The word iterator ensures trailing punctuation (such as periods at sentence ends) is excluded from
+ * the word token length, preventing invalid ranges that include trailing dots or symbols.
  */
 public class SentenceLevelAdapter {
     private static class EmptySentenceSuggestionsInfosInitializationHolder {
@@ -134,7 +148,6 @@ public class SentenceLevelAdapter {
     }
 
     public SentenceTextInfoParams getSplitWords(TextInfo originalTextInfo) {
-        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.getSplitWords() entry");
         final WordIterator wordIterator = mWordIterator;
         final CharSequence originalText =
                 TextInfoCompatUtils.getCharSequenceOrString(originalTextInfo);
@@ -156,21 +169,16 @@ public class SentenceLevelAdapter {
             }
             wordEnd = wordIterator.getEndOfWord(originalText, wordStart);
         }
-        SentenceTextInfoParams params = new SentenceTextInfoParams(originalTextInfo, wordItems);
-        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.getSplitWords() exit itemsCount=" + params.mItems.size());
-        return params;
+        return new SentenceTextInfoParams(originalTextInfo, wordItems);
     }
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
     public static SentenceSuggestionsInfo reconstructSuggestions(
             SentenceTextInfoParams originalTextInfoParams, SuggestionsInfo[] results) {
-        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() entry");
         if (results == null || results.length == 0) {
-            Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit (results null/empty)");
             return null;
         }
         if (originalTextInfoParams == null) {
-            Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit (params null)");
             return null;
         }
         final int originalCookie = originalTextInfoParams.mOriginalTextInfo.getCookie();
@@ -196,8 +204,6 @@ public class SentenceLevelAdapter {
             lengths[i] = item.mLength;
             reconstructedSuggestions[i] = result != null ? result : EMPTY_SUGGESTIONS_INFO;
         }
-        SentenceSuggestionsInfo ssi = new SentenceSuggestionsInfo(reconstructedSuggestions, offsets, lengths);
-        Log.i("FUTO_SPELLCHECKER", "SentenceLevelAdapter.reconstructSuggestions() exit count=" + querySize);
-        return ssi;
+        return new SentenceSuggestionsInfo(reconstructedSuggestions, offsets, lengths);
     }
 }

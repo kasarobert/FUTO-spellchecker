@@ -33,21 +33,28 @@ import org.futo.inputmethod.latin.NgramContext;
 import org.futo.inputmethod.latin.SuggestedWords.SuggestedWordInfo;
 import org.futo.inputmethod.latin.WordComposer;
 import org.futo.inputmethod.latin.common.Constants;
-import org.futo.inputmethod.latin.common.LocaleUtils;
 import org.futo.inputmethod.latin.common.StringUtils;
 import org.futo.inputmethod.latin.define.DebugFlags;
 import org.futo.inputmethod.latin.utils.BinaryDictionaryUtils;
 import org.futo.inputmethod.latin.utils.ScriptUtils;
 import org.futo.inputmethod.latin.utils.StatsUtils;
 import org.futo.inputmethod.latin.utils.SuggestionResults;
-import org.futo.inputmethod.keyboard.internal.KeyboardLayoutElement;
-import org.futo.inputmethod.keyboard.internal.KeyboardLayoutKind;
-import org.futo.inputmethod.keyboard.internal.KeyboardLayoutPage;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Base spellchecker session class responsible for word-level spell checking and suggestion generation.
+ *
+ * Architecture & Lifecycle:
+ * 1. Created by {@link AndroidSpellCheckerService#createSession()} when Android's TextServicesManager
+ *    binds a spellchecker session.
+ * 2. On creation, {@link #onCreate()} resolves the requested session locale against FUTO's active
+ *    subtype and multilingual language bucket via {@link SpellCheckerLanguageManager}.
+ * 3. Individual words passed from Android OS via {@link #onGetSuggestions(TextInfo, int)} are evaluated
+ *    against FUTO's existing {@link org.futo.inputmethod.latin.DictionaryFacilitator} engine.
+ */
 public abstract class AndroidWordLevelSpellCheckerSession extends Session {
     private static final String TAG = AndroidWordLevelSpellCheckerSession.class.getSimpleName();
 
@@ -79,7 +86,7 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                 new LruCache<>(MAX_CACHE_SIZE);
 
         private static String generateKey(final String query) {
-            return query + "";
+            return query;
         }
 
         public SuggestionsParams getSuggestionsFromCache(final String query) {
@@ -102,7 +109,9 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
     }
 
     AndroidWordLevelSpellCheckerSession(final AndroidSpellCheckerService service) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.<init>");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.<init>");
+        }
         mService = service;
         final ContentResolver cres = service.getContentResolver();
 
@@ -115,17 +124,27 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
         cres.registerContentObserver(Words.CONTENT_URI, true, mObserver);
     }
 
+    /**
+     * Initializes the session's active locales.
+     * Obtains the target language list by querying FUTO's DataStore settings
+     * (active subtype + multilingual language bucket) via {@link SpellCheckerLanguageManager}.
+     */
     @Override
     public void onCreate() {
         final String localeString = getLocale();
         mLocales = SpellCheckerLanguageManager.INSTANCE.resolveLocales(mService, localeString);
         mLocale = mLocales.isEmpty() ? Locale.ENGLISH : mLocales.get(0);
-        Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onCreate() session locale: " + localeString + ", resolved: " + mLocales);
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onCreate() session locale: "
+                    + localeString + ", resolved locales: " + mLocales);
+        }
     }
 
     @Override
     public void onClose() {
-        Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onClose()");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onClose()");
+        }
         final ContentResolver cres = mService.getContentResolver();
         cres.unregisterContentObserver(mObserver);
     }
@@ -169,6 +188,10 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                type == Character.ENCLOSING_MARK;
     }
 
+    /**
+     * Determines whether a word token is eligible for spellchecking.
+     * Filters out email addresses, URLs, numbers, short words, and words written in unsupported scripts.
+     */
     private static int getCheckabilityInScript(final String text, final List<Locale> locales) {
         if (TextUtils.isEmpty(text) || text.length() <= 1) return CHECKABILITY_TOO_SHORT;
 
@@ -222,35 +245,35 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                 letterCount++;
             }
         }
-        // Guestimate heuristic: perform spell checking if at least 3/4 of the characters
-        // in this word are letters
+
+        // If all letter characters in the word belong to an unsupported script (e.g. CJK when checking English),
+        // skip spellchecking for this word rather than flagging it as a typo.
+        if (hasUnsupportedScriptLetter && !hasSupportedScriptLetter) {
+            return CHECKABILITY_UNSUPPORTED_SCRIPT;
+        }
+
         return (letterCount * 4 < length * 3)
                 ? CHECKABILITY_TOO_MANY_NON_LETTERS : CHECKABILITY_CHECKABLE;
     }
 
     /**
      * Helper method to test valid capitalizations of a word.
-     *
-     * If the "text" is lower-case, we test only the exact string.
-     * If the "Text" is capitalized, we test the exact string "Text" and the lower-cased
-     *  version of it "text".
-     * If the "TEXT" is fully upper case, we test the exact string "TEXT", the lower-cased
-     *  version of it "text" and the capitalized version of it "Text".
+     * Tests exact capitalization, lower-case, and Title-case variants against the active dictionaries.
      */
-    private boolean isInDictForAnyCapitalization(final String text, final int capitalizeType) {
+    private boolean isInDictForAnyCapitalization(final List<Locale> activeLocales, final String text, final int capitalizeType) {
         // If the word is in there as is, then it's in the dictionary. If not, we'll test lower
         // case versions, but only if the word is not already all-lower case or mixed case.
-        if (mService.isValidWord(mLocales, text)) return true;
+        if (mService.isValidWord(activeLocales, text)) return true;
         if (StringUtils.CAPITALIZE_NONE == capitalizeType) return false;
 
-        for (Locale loc : mLocales) {
+        for (Locale loc : activeLocales) {
         // If we come here, we have a capitalized word (either First- or All-).
         // Downcase the word and look it up again. If the word is only capitalized, we
         // tested all possibilities, so if it's still negative we can return false.
             final String lowerCaseText = text.toLowerCase(loc);
-            if (mService.isValidWord(mLocales, lowerCaseText)) return true;
+            if (mService.isValidWord(activeLocales, lowerCaseText)) return true;
             if (StringUtils.CAPITALIZE_FIRST != capitalizeType) {
-                if (mService.isValidWord(mLocales,
+                if (mService.isValidWord(activeLocales,
                         StringUtils.capitalizeFirstAndDowncaseRest(lowerCaseText, loc))) return true;
             }
         }
@@ -261,11 +284,21 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
         return false;
     }
 
+    // Note : this must be reentrant
+    /**
+     * Gets a list of suggestions for a specific string. This returns a list of possible
+     * corrections for the text passed as an argument. It may split or group words, and
+     * even perform grammatical analysis.
+     */
     protected SuggestionsInfo onGetSuggestionsInternal(
             final TextInfo textInfo, final int suggestionsLimit) {
         return onGetSuggestionsInternal(textInfo, null, suggestionsLimit);
     }
 
+    /**
+     * Internal implementation of word-level spell checking.
+     * Evaluates word validity, queries FUTO's DictionaryFacilitator, and formats SuggestionsInfo.
+     */
     protected SuggestionsInfo onGetSuggestionsInternal(
             final TextInfo textInfo, final NgramContext ngramContext, final int suggestionsLimit) {
         try {
@@ -275,30 +308,37 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                     replaceAll("^" + quotesRegexp, "").
                     replaceAll(quotesRegexp + "$", "");
 
-            Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal entry limit=" + suggestionsLimit + " locales=" + mLocales);
+            // Working copy of active locales for this request.
+            // Do NOT permanently overwrite member variable mLocales so that temporary fallbacks
+            // don't prevent original locales from being used once their dictionaries load.
+            List<Locale> activeLocales = mLocales;
+            Locale activeLocale = mLocale;
 
-            if (!mService.hasMainDictionaryForLocales(mLocales)) {
-                Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal: No main dictionary for locales: " + mLocales + ", attempting fallback to English");
+            if (!mService.hasMainDictionaryForLocales(activeLocales)) {
+                // If primary dictionaries are not available or still initializing, check English fallback
                 final List<Locale> fallbackLocales = java.util.Collections.singletonList(Locale.ENGLISH);
                 if (mService.hasMainDictionaryForLocales(fallbackLocales)) {
-                    mLocales = fallbackLocales;
-                    mLocale = Locale.ENGLISH;
+                    activeLocales = fallbackLocales;
+                    activeLocale = Locale.ENGLISH;
                 } else {
-                    Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal early return: no main dictionary available for " + mLocales);
                     return AndroidSpellCheckerService.getNotInDictEmptySuggestions(
                             false /* reportAsTypo */);
                 }
             }
 
-            // Handle special patterns like email, URI, telephone number.
-            final int checkability = getCheckabilityInScript(text, mLocales);
+            // Handle special patterns like email, URI, telephone numbers, or unsupported scripts.
+            final int checkability = getCheckabilityInScript(text, activeLocales);
             if (CHECKABILITY_CHECKABLE != checkability) {
-                Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal early return: uncheckable code=" + checkability);
+                if (CHECKABILITY_UNSUPPORTED_SCRIPT == checkability) {
+                    // Skip words in unsupported scripts without marking as typo
+                    return AndroidSpellCheckerService.getNotInDictEmptySuggestions(false /* reportAsTypo */);
+                }
+
                 if (CHECKABILITY_CONTAINS_PERIOD == checkability) {
                     final String[] splitText = text.split(Constants.REGEXP_PERIOD);
                     boolean allWordsAreValid = true;
                     for (final String word : splitText) {
-                        if (!mService.isValidWord(mLocales, word)) {
+                        if (!mService.isValidWord(activeLocales, word)) {
                             allWordsAreValid = false;
                             break;
                         }
@@ -312,7 +352,7 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                 }
                 return (checkability == CHECKABILITY_UNSUPPORTED_SCRIPT) ?
                         AndroidSpellCheckerService.getNotInDictEmptySuggestions(false /* reportAsTypo */) :
-                        (mService.isValidWord(mLocales, text) ?
+                        (mService.isValidWord(activeLocales, text) ?
                                 AndroidSpellCheckerService.getInDictEmptySuggestions() :
                                 AndroidSpellCheckerService.getNotInDictEmptySuggestions(
                                         CHECKABILITY_CONTAINS_PERIOD == checkability /* reportAsTypo */));
@@ -321,15 +361,12 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
             // Handle normal words.
             final int capitalizeType = StringUtils.getCapitalizationType(text);
 
-            if (isInDictForAnyCapitalization(text, capitalizeType)) {
-                Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal return: in-dictionary (valid word)");
+            if (isInDictForAnyCapitalization(activeLocales, text, capitalizeType)) {
                 return AndroidSpellCheckerService.getInDictEmptySuggestions();
             }
-            Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal: word is NOT in dictionary (typo)");
 
-            final Keyboard keyboard = mService.getKeyboardForLocale(mLocale);
+            final Keyboard keyboard = mService.getKeyboardForLocale(activeLocale);
             if (null == keyboard) {
-                Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal early return: no keyboard for locale: " + mLocale);
                 // If there is no keyboard for this locale, don't do any spell-checking.
                 return AndroidSpellCheckerService.getNotInDictEmptySuggestions(
                         false /* reportAsTypo */);
@@ -337,25 +374,13 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
 
             final WordComposer composer = new WordComposer();
             final int[] codePoints = StringUtils.toCodePointArray(text);
-            final int[] coordinates;
-            coordinates = keyboard.getCoordinates(codePoints);
+            final int[] coordinates = keyboard.getCoordinates(codePoints);
             composer.setComposingWord(codePoints, coordinates);
             // TODO: Don't gather suggestions if the limit is <= 0 unless necessary
             final SuggestionResults suggestionResults = mService.getSuggestionResults(
-                    mLocales, composer.getComposedDataSnapshot(), ngramContext, keyboard);
-            final Result result = getResult(capitalizeType, mLocale, suggestionsLimit,
+                    activeLocales, composer.getComposedDataSnapshot(), ngramContext, keyboard);
+            final Result result = getResult(capitalizeType, activeLocale, suggestionsLimit,
                     mService.getRecommendedThreshold(), text, suggestionResults);
-            if (DebugFlags.DEBUG_ENABLED) {
-                if (result.mSuggestions != null && result.mSuggestions.length > 0) {
-                    final StringBuilder builder = new StringBuilder();
-                    for (String suggestion : result.mSuggestions) {
-                        builder.append(" [");
-                        builder.append(suggestion);
-                        builder.append("]");
-                    }
-                    Log.i(TAG, "onGetSuggestionsInternal() : Suggestions =" + builder);
-                }
-            }
             // Handle word not in dictionary.
             // This is called only once per unique word, so entering multiple
             // instances of the same word does not result in more than one call
@@ -372,11 +397,9 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                             : 0);
             final SuggestionsInfo retval = new SuggestionsInfo(flags, result.mSuggestions);
             mSuggestionsCache.putSuggestionsToCache(text, result.mSuggestions, flags);
-            Log.i("FUTO_SPELLCHECKER", "onGetSuggestionsInternal exit: returned SuggestionsInfo flags=" + flags + ", count=" + (result.mSuggestions != null ? result.mSuggestions.length : 0));
             return retval;
         } catch (RuntimeException e) {
             // Don't kill the keyboard if there is a bug in the spell checker
-            Log.e("FUTO_SPELLCHECKER", "Exception while spellchecking", e);
             Log.e(TAG, "Exception while spellchecking", e);
             return AndroidSpellCheckerService.getNotInDictEmptySuggestions(
                     false /* reportAsTypo */);
@@ -437,12 +460,9 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
      */
     @Override
     public SuggestionsInfo onGetSuggestions(final TextInfo textInfo, final int suggestionsLimit) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onGetSuggestions() entry limit=" + suggestionsLimit);
         long ident = Binder.clearCallingIdentity();
         try {
-            SuggestionsInfo retval = onGetSuggestionsInternal(textInfo, suggestionsLimit);
-            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onGetSuggestions() exit flags=" + (retval != null ? retval.getSuggestionsAttributes() : -1));
-            return retval;
+            return onGetSuggestionsInternal(textInfo, suggestionsLimit);
         } finally {
             Binder.restoreCallingIdentity(ident);
         }

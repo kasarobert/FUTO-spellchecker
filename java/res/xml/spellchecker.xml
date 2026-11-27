@@ -14,15 +14,18 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */
 -->
-
 <!-- The attributes in this XML file provide the configuration information
      for the spell checker -->
 
+<!--
+    System SpellChecker metadata configuration.
+    Android OS requires a static XML declaration listing supported subtypes.
+    Language selection and multilingual buckets are dynamically resolved by FUTO
+    against the user's active keyboard settings (SubtypesSetting, MultilingualBucketSetting).
+-->
 <spell-checker xmlns:android="http://schemas.android.com/apk/res/android"
-        android:label="@string/spell_checker_service_name"
-        android:settingsActivity="org.futo.inputmethod.latin.spellcheck.SpellCheckerSettingsActivity">
+        android:label="@string/spell_checker_service_name">
     <subtype
             android:label="@string/subtype_generic"
             android:subtypeLocale="en"

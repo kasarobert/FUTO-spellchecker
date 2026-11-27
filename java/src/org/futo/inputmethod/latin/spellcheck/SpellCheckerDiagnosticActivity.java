@@ -222,12 +222,14 @@ public final class SpellCheckerDiagnosticActivity extends Activity implements Sp
         }
 
         TextInfo[] queryTextInfos = new TextInfo[]{
-                new TextInfo("hello"),
-                new TextInfo("spelingg"),
+                new TextInfo("apple"),
+                new TextInfo("alma"),
+                new TextInfo("applle"),
+                new TextInfo("allma"),
                 new TextInfo("Thiss is a sentense.")
         };
 
-        logAndDisplay("Submitting manual query: \"hello\", \"spelingg\", \"Thiss is a sentense.\" via getSentenceSuggestions()");
+        logAndDisplay("Submitting manual query: \"apple\", \"alma\", \"applle\", \"allma\", \"Thiss is a sentense.\" via getSentenceSuggestions()");
         mSpellCheckerSession.getSentenceSuggestions(queryTextInfos, 5);
 
         mHandler.postDelayed(() -> {

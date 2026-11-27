@@ -18,7 +18,6 @@ package org.futo.inputmethod.latin.spellcheck;
 
 import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.res.Resources;
 import android.os.Binder;
 import android.os.Build;
 import android.text.TextUtils;
@@ -29,11 +28,21 @@ import android.view.textservice.TextInfo;
 
 import org.futo.inputmethod.compat.TextInfoCompatUtils;
 import org.futo.inputmethod.latin.NgramContext;
+import org.futo.inputmethod.latin.define.DebugFlags;
 import org.futo.inputmethod.latin.utils.SpannableStringUtils;
 
 import java.util.ArrayList;
 import java.util.Locale;
 
+/**
+ * Concrete spellchecker session handling sentence-level requests from Android OS.
+ *
+ * Sentence-Level vs Word-Level:
+ * Android's TextView and Editor pass entire sentences to {@link #onGetSentenceSuggestionsMultiple(TextInfo[], int)}.
+ * This class uses {@link SentenceLevelAdapter} to tokenize sentences into individual word tokens,
+ * passes each token to word-level evaluation, and reconstructs {@link SentenceSuggestionsInfo}
+ * with exact character offsets and lengths matching the original text.
+ */
 public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheckerSession {
     private static final String TAG = AndroidSpellCheckerSession.class.getSimpleName();
     private static final boolean DBG = false;
@@ -42,7 +51,9 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
 
     public AndroidSpellCheckerSession(AndroidSpellCheckerService service) {
         super(service);
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.<init>");
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.<init>");
+        }
         mContext = service;
     }
 
@@ -67,8 +78,6 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
             final int offset = ssi.getOffsetAt(i);
             final int length = ssi.getLengthAt(i);
             final CharSequence subText = typedText.subSequence(offset, offset + length);
-            final NgramContext ngramContext =
-                    new NgramContext(new NgramContext.WordInfo(currentWord));
             currentWord = subText;
             if (!subText.toString().contains(AndroidSpellCheckerService.SINGLE_QUOTE)) {
                 continue;
@@ -94,10 +103,6 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
                 final int newFlags = 0;
                 final SuggestionsInfo newSi = new SuggestionsInfo(newFlags, EMPTY_STRING_ARRAY);
                 newSi.setCookieAndSequence(si.getCookie(), si.getSequence());
-                if (DBG) {
-                    Log.d(TAG, "Override and remove old span over: " + splitText + ", "
-                            + offset + "," + newLength);
-                }
                 additionalOffsets.add(offset);
                 additionalLengths.add(newLength);
                 additionalSuggestionsInfos.add(newSi);
@@ -125,13 +130,14 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
         return new SentenceSuggestionsInfo(newSuggestionsInfos, newOffsets, newLengths);
     }
 
+    /**
+     * Entry point for sentence-level spellchecking requests dispatched by Android's TextServicesManager.
+     */
     @Override
     public SentenceSuggestionsInfo[] onGetSentenceSuggestionsMultiple(TextInfo[] textInfos,
             int suggestionsLimit) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() entry count=" + (textInfos != null ? textInfos.length : 0));
         final SentenceSuggestionsInfo[] retval = splitAndSuggest(textInfos, suggestionsLimit);
         if (retval == null || retval.length != textInfos.length) {
-            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() exit (null or mismatched length)");
             return retval;
         }
         for (int i = 0; i < retval.length; ++i) {
@@ -141,28 +147,15 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
                 retval[i] = tempSsi;
             }
         }
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSentenceSuggestionsMultiple() exit count=" + retval.length);
         return retval;
     }
 
     /**
-     * Get sentence suggestions for specified texts in an array of TextInfo. This is taken from
-     * SpellCheckerService#onGetSentenceSuggestionsMultiple that we can't use because it's
-     * using private variables.
-     * The default implementation splits the input text to words and returns
-     * {@link SentenceSuggestionsInfo} which contains suggestions for each word.
-     * This function will run on the incoming IPC thread.
-     * So, this is not called on the main thread,
-     * but will be called in series on another thread.
-     * @param textInfos an array of the text metadata
-     * @param suggestionsLimit the maximum number of suggestions to be returned
-     * @return an array of {@link SentenceSuggestionsInfo} returned by
-     * {@link android.service.textservice.SpellCheckerService.Session#onGetSuggestions(TextInfo, int)}
+     * Splits sentence-level TextInfo objects into word tokens using SentenceLevelAdapter,
+     * queries word-level suggestions, and reconstructs SentenceSuggestionsInfo.
      */
     private SentenceSuggestionsInfo[] splitAndSuggest(TextInfo[] textInfos, int suggestionsLimit) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() entry count=" + (textInfos != null ? textInfos.length : 0));
         if (textInfos == null || textInfos.length == 0) {
-            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() early return: empty textInfos");
             return SentenceLevelAdapter.getEmptySentenceSuggestionsInfo();
         }
         SentenceLevelAdapter sentenceLevelAdapter;
@@ -178,7 +171,6 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
             }
         }
         if (sentenceLevelAdapter == null) {
-            Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() early return: sentenceLevelAdapter is null");
             return SentenceLevelAdapter.getEmptySentenceSuggestionsInfo();
         }
         final int infosSize = textInfos.length;
@@ -197,14 +189,12 @@ public final class AndroidSpellCheckerSession extends AndroidWordLevelSpellCheck
                     textInfoParams, onGetSuggestionsMultiple(
                             splitTextInfos, suggestionsLimit, true));
         }
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.splitAndSuggest() exit count=" + retval.length);
         return retval;
     }
 
     @Override
     public SuggestionsInfo[] onGetSuggestionsMultiple(TextInfo[] textInfos,
             int suggestionsLimit, boolean sequentialWords) {
-        Log.i("FUTO_SPELLCHECKER", "AndroidSpellCheckerSession.onGetSuggestionsMultiple() entry count=" + (textInfos != null ? textInfos.length : 0) + ", sequential=" + sequentialWords);
         long ident = Binder.clearCallingIdentity();
         try {
             final int length = textInfos.length;

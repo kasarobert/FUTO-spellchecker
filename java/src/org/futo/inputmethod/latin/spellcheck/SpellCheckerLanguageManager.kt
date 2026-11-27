@@ -8,25 +8,36 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.ActiveSubtype
+import org.futo.inputmethod.latin.BuildConfig
 import org.futo.inputmethod.latin.MultilingualBucketSetting
 import org.futo.inputmethod.latin.Subtypes
 import org.futo.inputmethod.latin.SubtypesSetting
 import org.futo.inputmethod.latin.localeFromString
+import org.futo.inputmethod.latin.matchesLocale
 import org.futo.inputmethod.latin.stripExtensionsIfNeeded
 import org.futo.inputmethod.latin.uix.getSettingBlocking
 import org.futo.inputmethod.latin.uix.getSettingFlow
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 
+/**
+ * Manages language resolution for the FUTO SpellCheckerService.
+ *
+ * Responsibilities:
+ * 1. Resolves the requested Android spellchecker session locale against FUTO's active
+ *    subtype and multilingual bucket configuration stored in DataStore.
+ * 2. Provides a thread-safe cached locale list that updates whenever user language
+ *    settings change in FUTO Keyboard.
+ */
 object SpellCheckerLanguageManager {
-    private const val TAG = "SpellCheckerLangManager"
+    private const val TAG = "FUTO_SPELLCHECKER"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val cachedLocales = AtomicReference<List<Locale>>(emptyList())
     private var isInitialized = false
 
     /**
-     * Normalizes a Locale object or locale string into a canonical Locale without extensions.
+     * Normalizes a Locale object into a canonical Locale without extensions.
      */
     fun normalizeLocale(locale: Locale): Locale = locale.stripExtensionsIfNeeded()
 
@@ -36,25 +47,7 @@ object SpellCheckerLanguageManager {
     }
 
     /**
-     * Checks if two Locales match, accounting for language-only, region, and script specificities.
-     */
-    fun matches(l1: Locale, l2: Locale): Boolean {
-        if (l1 == l2) return true
-        if (l1.language.equalsIgnoreCase(l2.language)) {
-            if (l1.country.isEmpty() || l2.country.isEmpty() || l1.country.equalsIgnoreCase(l2.country)) {
-                if (l1.script.isEmpty() || l2.script.isEmpty() || l1.script.equalsIgnoreCase(l2.script)) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    private fun String.equalsIgnoreCase(other: String): Boolean =
-        this.equals(other, ignoreCase = true)
-
-    /**
-     * Initializes setting observers to keep the active locale list updated.
+     * Initializes DataStore setting observers to keep the active locale list updated.
      */
     fun init(context: Context) {
         if (isInitialized) return
@@ -75,14 +68,17 @@ object SpellCheckerLanguageManager {
                     updateCache(context)
                 }.collect {}
             } catch (e: Exception) {
-                Log.e(TAG, "Error collecting settings flow", e)
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "Error collecting settings flow in SpellCheckerLanguageManager", e)
+                }
             }
         }
     }
 
     /**
      * Resolves the full list of active locales for spellchecking.
-     * Guaranteed to return a deterministic, deduplicated list.
+     * Maps the session locale requested by Android OS to FUTO's configured
+     * active subtype and multilingual language bucket.
      */
     fun resolveLocales(context: Context, sessionLocaleStr: String?): List<Locale> {
         val sessionLocale = sessionLocaleStr?.takeIf { it.isNotBlank() }?.let { normalizeLocale(it) }
@@ -91,37 +87,60 @@ object SpellCheckerLanguageManager {
         val activeSubtype = Subtypes.convertToSubtype(activeSubtypeStr)
         val activeLocale = Subtypes.getLocale(activeSubtype)
 
-        val primaryLocale = sessionLocale ?: activeLocale
-
         // Get enabled subtypes from settings
         val enabledSubtypeStrings = context.getSettingBlocking(SubtypesSetting)
         val enabledLocales = enabledSubtypeStrings.map { Subtypes.getLocale(Subtypes.convertToSubtype(it)) }
 
-        // Match primaryLocale against enabledLocales or multilingual bucket
-        val matchedEnabledLocale = enabledLocales.find { matches(primaryLocale, it) } ?: primaryLocale
+        // Get raw multilingual bucket setting
+        val rawBucketStrings = context.getSettingBlocking(MultilingualBucketSetting)
+        val bucketLocales = rawBucketStrings.map { normalizeLocale(Subtypes.getLocale(it)) }
+
+        // Determine primary locale and matching strategy
+        val primaryLocale = sessionLocale ?: activeLocale
+
+        // Match primaryLocale against enabledLocales or bucketLocales or fallback to activeLocale
+        val matchedEnabledLocale = enabledLocales.find { matchesLocale(primaryLocale, it) }
+            ?: bucketLocales.find { matchesLocale(primaryLocale, it) }
+            ?: activeLocale
 
         // Get multilingual bucket locales for the matched primary locale
-        val bucketLocales = Subtypes.getMultilingualBucket(context, matchedEnabledLocale)
+        val resolvedBucket = Subtypes.getMultilingualBucket(context, matchedEnabledLocale)
             .map { normalizeLocale(it) }
 
         val resultList = mutableListOf<Locale>()
         resultList.add(normalizeLocale(matchedEnabledLocale))
 
         // Append bucket locales deterministically
-        val sortedBucket = bucketLocales
-            .filter { !matches(it, matchedEnabledLocale) }
+        val sortedBucket = resolvedBucket
+            .filter { !matchesLocale(it, matchedEnabledLocale) }
             .distinctBy { it.toLanguageTag() }
             .sortedBy { it.toLanguageTag() }
 
         resultList.addAll(sortedBucket)
-        return resultList.distinctBy { it.toLanguageTag() }
+        val resolvedList = resultList.distinctBy { it.toLanguageTag() }
+
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "[SpellCheckerLanguageManager] resolveLocales:" +
+                    "\n  sessionLocaleStr: $sessionLocaleStr" +
+                    "\n  rawActiveSubtype: $activeSubtypeStr" +
+                    "\n  parsedActiveLocale: $activeLocale" +
+                    "\n  rawSubtypesSetting: $enabledSubtypeStrings" +
+                    "\n  parsedEnabledLocales: $enabledLocales" +
+                    "\n  rawMultilingualBucketSetting: $rawBucketStrings" +
+                    "\n  parsedBucketLocales: $bucketLocales" +
+                    "\n  primaryLocale: $primaryLocale" +
+                    "\n  matchedEnabledLocale: $matchedEnabledLocale" +
+                    "\n  finalResolvedLocales: $resolvedList")
+        }
+
+        return resolvedList
     }
 
     private fun updateCache(context: Context) {
         val newLocales = resolveLocales(context, null)
         val oldLocales = cachedLocales.getAndSet(newLocales)
-        if (oldLocales != newLocales) {
-            Log.i(TAG, "Active spellchecker locales updated: $oldLocales -> $newLocales")
+        if (oldLocales != newLocales && BuildConfig.DEBUG) {
+            Log.i(TAG, "[SpellCheckerLanguageManager] Active spellchecker locales updated: $oldLocales -> $newLocales")
         }
     }
 

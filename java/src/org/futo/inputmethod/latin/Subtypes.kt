@@ -69,6 +69,21 @@ fun Locale.stripExtensionsIfNeeded(): Locale {
     return newLocale
 }
 
+/**
+ * Checks if two Locales match, accounting for language-only, region, and script specificities.
+ */
+fun matchesLocale(l1: Locale, l2: Locale): Boolean {
+    if (l1 == l2) return true
+    if (l1.language.equals(l2.language, ignoreCase = true)) {
+        if (l1.country.isEmpty() || l2.country.isEmpty() || l1.country.equals(l2.country, ignoreCase = true)) {
+            if (l1.script.isEmpty() || l2.script.isEmpty() || l1.script.equals(l2.script, ignoreCase = true)) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
 val SubtypesSetting = SettingsKey(
     stringSetPreferencesKey("subtypes"),
     setOf()
@@ -392,10 +407,11 @@ object Subtypes {
         val set = context.getSetting(MultilingualBucketSetting).map {
             getLocale(it)
         }
-        if(!set.contains(locale)) {
+        val matchedInBucket = set.find { matchesLocale(locale, it) }
+        if (matchedInBucket == null) {
             return emptyList()
         } else {
-            return set.filter { it != locale }
+            return set.filter { !matchesLocale(it, locale) }
         }
     }
 }
