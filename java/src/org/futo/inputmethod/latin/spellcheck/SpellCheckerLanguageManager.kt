@@ -2,11 +2,6 @@ package org.futo.inputmethod.latin.spellcheck
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
 import org.futo.inputmethod.latin.ActiveSubtype
 import org.futo.inputmethod.latin.BuildConfig
 import org.futo.inputmethod.latin.MultilingualBucketSetting
@@ -16,25 +11,20 @@ import org.futo.inputmethod.latin.localeFromString
 import org.futo.inputmethod.latin.matchesLocale
 import org.futo.inputmethod.latin.stripExtensionsIfNeeded
 import org.futo.inputmethod.latin.uix.getSettingBlocking
-import org.futo.inputmethod.latin.uix.getSettingFlow
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Manages language resolution for the FUTO SpellCheckerService.
  *
  * Responsibilities:
- * 1. Resolves the requested Android spellchecker session locale against FUTO's active
- *    subtype and multilingual bucket configuration stored in DataStore.
- * 2. Provides a thread-safe cached locale list that updates whenever user language
- *    settings change in FUTO Keyboard.
+ * Maps the Android OS spellchecker session locale to FUTO's active keyboard language
+ * configuration (ActiveSubtype, SubtypesSetting, and MultilingualBucketSetting).
+ *
+ * Reuses FUTO's existing DataStore settings as the single source of truth without
+ * creating duplicate language configurations or state.
  */
 object SpellCheckerLanguageManager {
     private const val TAG = "FUTO_SPELLCHECKER"
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val cachedLocales = AtomicReference<List<Locale>>(emptyList())
-    private var isInitialized = false
 
     /**
      * Normalizes a Locale object into a canonical Locale without extensions.
@@ -47,38 +37,13 @@ object SpellCheckerLanguageManager {
     }
 
     /**
-     * Initializes DataStore setting observers to keep the active locale list updated.
-     */
-    fun init(context: Context) {
-        if (isInitialized) return
-        synchronized(this) {
-            if (isInitialized) return
-            isInitialized = true
-        }
-
-        updateCache(context)
-
-        scope.launch {
-            try {
-                combine(
-                    context.getSettingFlow(SubtypesSetting),
-                    context.getSettingFlow(ActiveSubtype),
-                    context.getSettingFlow(MultilingualBucketSetting)
-                ) { _, _, _ ->
-                    updateCache(context)
-                }.collect {}
-            } catch (e: Exception) {
-                if (BuildConfig.DEBUG) {
-                    Log.e(TAG, "Error collecting settings flow in SpellCheckerLanguageManager", e)
-                }
-            }
-        }
-    }
-
-    /**
-     * Resolves the full list of active locales for spellchecking.
-     * Maps the session locale requested by Android OS to FUTO's configured
-     * active subtype and multilingual language bucket.
+     * Resolves the full list of active locales for a spellchecking session.
+     * Reuses FUTO's DataStore settings to determine the primary active language
+     * and any secondary languages configured in FUTO's multilingual language bucket.
+     *
+     * @param context The application context.
+     * @param sessionLocaleStr The locale string requested by Android OS for this session.
+     * @return A list of Locales to be checked against FUTO's DictionaryFacilitator.
      */
     fun resolveLocales(context: Context, sessionLocaleStr: String?): List<Locale> {
         val sessionLocale = sessionLocaleStr?.takeIf { it.isNotBlank() }?.let { normalizeLocale(it) }
@@ -134,19 +99,5 @@ object SpellCheckerLanguageManager {
         }
 
         return resolvedList
-    }
-
-    private fun updateCache(context: Context) {
-        val newLocales = resolveLocales(context, null)
-        val oldLocales = cachedLocales.getAndSet(newLocales)
-        if (oldLocales != newLocales && BuildConfig.DEBUG) {
-            Log.i(TAG, "[SpellCheckerLanguageManager] Active spellchecker locales updated: $oldLocales -> $newLocales")
-        }
-    }
-
-    fun getCachedLocales(context: Context): List<Locale> {
-        init(context)
-        val list = cachedLocales.get()
-        return if (list.isNotEmpty()) list else resolveLocales(context, null)
     }
 }

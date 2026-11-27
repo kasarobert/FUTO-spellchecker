@@ -36,7 +36,6 @@ import org.futo.inputmethod.latin.common.Constants;
 import org.futo.inputmethod.latin.common.StringUtils;
 import org.futo.inputmethod.latin.define.DebugFlags;
 import org.futo.inputmethod.latin.utils.BinaryDictionaryUtils;
-import org.futo.inputmethod.latin.utils.ScriptUtils;
 import org.futo.inputmethod.latin.utils.StatsUtils;
 import org.futo.inputmethod.latin.utils.SuggestionResults;
 
@@ -149,127 +148,15 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
         cres.unregisterContentObserver(mObserver);
     }
 
-    private static final int CHECKABILITY_CHECKABLE = 0;
-    private static final int CHECKABILITY_TOO_MANY_NON_LETTERS = 1;
-    private static final int CHECKABILITY_CONTAINS_PERIOD = 2;
-    private static final int CHECKABILITY_EMAIL_OR_URL = 3;
-    private static final int CHECKABILITY_FIRST_LETTER_UNCHECKABLE = 4;
-    private static final int CHECKABILITY_TOO_SHORT = 5;
-    private static final int CHECKABILITY_UNSUPPORTED_SCRIPT = 6;
-
-
-
-    private static Character.UnicodeScript getLocaleUnicodeScript(final Locale locale) {
-        String script = locale.getScript();
-        if (!TextUtils.isEmpty(script)) {
-            try {
-                return Character.UnicodeScript.forName(script);
-            } catch (Exception ignored) {}
-        }
-        int scriptId = ScriptUtils.getScriptFromSpellCheckerLocale(locale);
-        switch (scriptId) {
-            case ScriptUtils.SCRIPT_CYRILLIC: return Character.UnicodeScript.CYRILLIC;
-            case ScriptUtils.SCRIPT_GREEK: return Character.UnicodeScript.GREEK;
-            case ScriptUtils.SCRIPT_HEBREW: return Character.UnicodeScript.HEBREW;
-            case ScriptUtils.SCRIPT_ARABIC: return Character.UnicodeScript.ARABIC;
-            case ScriptUtils.SCRIPT_ARMENIAN: return Character.UnicodeScript.ARMENIAN;
-            case ScriptUtils.SCRIPT_BENGALI: return Character.UnicodeScript.BENGALI;
-            case ScriptUtils.SCRIPT_DEVANAGARI: return Character.UnicodeScript.DEVANAGARI;
-            case ScriptUtils.SCRIPT_GEORGIAN: return Character.UnicodeScript.GEORGIAN;
-            case ScriptUtils.SCRIPT_THAI: return Character.UnicodeScript.THAI;
-            default: return Character.UnicodeScript.LATIN;
-        }
-    }
-
-    private static boolean isCombiningMark(final int codePoint) {
-        int type = Character.getType(codePoint);
-        return type == Character.NON_SPACING_MARK ||
-               type == Character.COMBINING_SPACING_MARK ||
-               type == Character.ENCLOSING_MARK;
-    }
-
-    /**
-     * Determines whether a word token is eligible for spellchecking.
-     * Filters out email addresses, URLs, numbers, short words, and words written in unsupported scripts.
-     */
-    private static int getCheckabilityInScript(final String text, final List<Locale> locales) {
-        if (TextUtils.isEmpty(text) || text.length() <= 1) return CHECKABILITY_TOO_SHORT;
-
-        // TODO: check if an equivalent processing can't be done more quickly with a
-        // compiled regexp.
-        // Filter by first letter
-        final int firstCodePoint = text.codePointAt(0);
-        // Filter out words that don't start with a letter or an apostrophe
-        if ('\'' == firstCodePoint || '\u2019' == firstCodePoint) {
-            // Apostrophe prefix
-        } else if (!Character.isLetter(firstCodePoint)) {
-            return CHECKABILITY_FIRST_LETTER_UNCHECKABLE;
-        }
-
-        List<Character.UnicodeScript> supportedScripts = new ArrayList<>();
-        for (Locale loc : locales) {
-            supportedScripts.add(getLocaleUnicodeScript(loc));
-        }
-
-        final int length = text.length();
-        int letterCount = 0;
-        boolean hasSupportedScriptLetter = false;
-        boolean hasUnsupportedScriptLetter = false;
-
-        for (int i = 0; i < length; i = text.offsetByCodePoints(i, 1)) {
-            final int codePoint = text.codePointAt(i);
-            // Any word containing a COMMERCIAL_AT is probably an e-mail address
-            // Any word containing a SLASH is probably either an ad-hoc combination of two
-            // words or a URI - in either case we don't want to spell check that
-            if (Constants.CODE_COMMERCIAL_AT == codePoint || Constants.CODE_SLASH == codePoint) {
-                return CHECKABILITY_EMAIL_OR_URL;
-            }
-            // If the string contains a period, native returns strange suggestions (it seems
-            // to return suggestions for everything up to the period only and to ignore the
-            // rest), so we suppress lookup if there is a period.
-            // TODO: investigate why native returns these suggestions and remove this code.
-            if (Constants.CODE_PERIOD == codePoint) {
-                return CHECKABILITY_CONTAINS_PERIOD;
-            }
-            if (Character.isLetter(codePoint)) {
-                letterCount++;
-                Character.UnicodeScript script = Character.UnicodeScript.of(codePoint);
-                if (script != Character.UnicodeScript.COMMON && script != Character.UnicodeScript.INHERITED) {
-                    if (supportedScripts.contains(script)) {
-                        hasSupportedScriptLetter = true;
-                    } else {
-                        hasUnsupportedScriptLetter = true;
-                    }
-                }
-            } else if (isCombiningMark(codePoint)) {
-                letterCount++;
-            }
-        }
-
-        // If all letter characters in the word belong to an unsupported script (e.g. CJK when checking English),
-        // skip spellchecking for this word rather than flagging it as a typo.
-        if (hasUnsupportedScriptLetter && !hasSupportedScriptLetter) {
-            return CHECKABILITY_UNSUPPORTED_SCRIPT;
-        }
-
-        return (letterCount * 4 < length * 3)
-                ? CHECKABILITY_TOO_MANY_NON_LETTERS : CHECKABILITY_CHECKABLE;
-    }
-
     /**
      * Helper method to test valid capitalizations of a word.
      * Tests exact capitalization, lower-case, and Title-case variants against the active dictionaries.
      */
     private boolean isInDictForAnyCapitalization(final List<Locale> activeLocales, final String text, final int capitalizeType) {
-        // If the word is in there as is, then it's in the dictionary. If not, we'll test lower
-        // case versions, but only if the word is not already all-lower case or mixed case.
         if (mService.isValidWord(activeLocales, text)) return true;
         if (StringUtils.CAPITALIZE_NONE == capitalizeType) return false;
 
         for (Locale loc : activeLocales) {
-        // If we come here, we have a capitalized word (either First- or All-).
-        // Downcase the word and look it up again. If the word is only capitalized, we
-        // tested all possibilities, so if it's still negative we can return false.
             final String lowerCaseText = text.toLowerCase(loc);
             if (mService.isValidWord(activeLocales, lowerCaseText)) return true;
             if (StringUtils.CAPITALIZE_FIRST != capitalizeType) {
@@ -278,18 +165,9 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
             }
         }
 
-        // If the lower case version is not in the dictionary, it's still possible
-        // that we have an all-caps version of a word that needs to be capitalized
-        // according to the dictionary. E.g. "GERMANS" only exists in the dictionary as "Germans".
         return false;
     }
 
-    // Note : this must be reentrant
-    /**
-     * Gets a list of suggestions for a specific string. This returns a list of possible
-     * corrections for the text passed as an argument. It may split or group words, and
-     * even perform grammatical analysis.
-     */
     protected SuggestionsInfo onGetSuggestionsInternal(
             final TextInfo textInfo, final int suggestionsLimit) {
         return onGetSuggestionsInternal(textInfo, null, suggestionsLimit);
@@ -326,15 +204,15 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                 }
             }
 
-            // Handle special patterns like email, URI, telephone numbers, or unsupported scripts.
-            final int checkability = getCheckabilityInScript(text, activeLocales);
-            if (CHECKABILITY_CHECKABLE != checkability) {
-                if (CHECKABILITY_UNSUPPORTED_SCRIPT == checkability) {
+            // Handle special patterns like email, URI, numbers, or unsupported scripts.
+            final int checkability = SpellCheckerScriptUtils.getCheckabilityInScript(text, activeLocales);
+            if (SpellCheckerScriptUtils.CHECKABILITY_CHECKABLE != checkability) {
+                if (SpellCheckerScriptUtils.CHECKABILITY_UNSUPPORTED_SCRIPT == checkability) {
                     // Skip words in unsupported scripts without marking as typo
                     return AndroidSpellCheckerService.getNotInDictEmptySuggestions(false /* reportAsTypo */);
                 }
 
-                if (CHECKABILITY_CONTAINS_PERIOD == checkability) {
+                if (SpellCheckerScriptUtils.CHECKABILITY_CONTAINS_PERIOD == checkability) {
                     final String[] splitText = text.split(Constants.REGEXP_PERIOD);
                     boolean allWordsAreValid = true;
                     for (final String word : splitText) {
@@ -350,12 +228,10 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
                                         TextUtils.join(Constants.STRING_SPACE, splitText) });
                     }
                 }
-                return (checkability == CHECKABILITY_UNSUPPORTED_SCRIPT) ?
-                        AndroidSpellCheckerService.getNotInDictEmptySuggestions(false /* reportAsTypo */) :
-                        (mService.isValidWord(activeLocales, text) ?
-                                AndroidSpellCheckerService.getInDictEmptySuggestions() :
-                                AndroidSpellCheckerService.getNotInDictEmptySuggestions(
-                                        CHECKABILITY_CONTAINS_PERIOD == checkability /* reportAsTypo */));
+                return mService.isValidWord(activeLocales, text) ?
+                        AndroidSpellCheckerService.getInDictEmptySuggestions() :
+                        AndroidSpellCheckerService.getNotInDictEmptySuggestions(
+                                SpellCheckerScriptUtils.CHECKABILITY_CONTAINS_PERIOD == checkability /* reportAsTypo */);
             }
 
             // Handle normal words.
@@ -436,8 +312,6 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
             suggestions.add(suggestion);
         }
         StringUtils.removeDupes(suggestions);
-        // This returns a String[], while toArray() returns an Object[] which cannot be cast
-        // into a String[].
         final List<String> gatheredSuggestionsList =
                 suggestions.subList(0, Math.min(suggestions.size(), suggestionsLimit));
         final String[] gatheredSuggestions =
