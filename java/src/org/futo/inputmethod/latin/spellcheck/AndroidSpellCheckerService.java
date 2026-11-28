@@ -40,6 +40,7 @@ import org.futo.inputmethod.latin.utils.SuggestionResults;
 
 import java.util.Collections;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Semaphore;
@@ -64,7 +65,8 @@ import javax.annotation.Nonnull;
  * {@link DictionaryFacilitatorLruCache} and {@link DictionaryFacilitator} instances.
  */
 public final class AndroidSpellCheckerService extends SpellCheckerService
-        implements SharedPreferences.OnSharedPreferenceChangeListener {
+        implements SharedPreferences.OnSharedPreferenceChangeListener,
+        SpellCheckerObserver.Listener {
     private static final String TAG = AndroidSpellCheckerService.class.getSimpleName();
 
     public static final String PREF_USE_CONTACTS_KEY = "pref_spellcheck_use_contacts";
@@ -85,6 +87,8 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     private final DictionaryFacilitatorLruCache mDictionaryFacilitatorCache =
             new DictionaryFacilitatorLruCache(this /* context */, DICTIONARY_NAME_PREFIX);
     private final ConcurrentHashMap<Locale, Keyboard> mKeyboardCache = new ConcurrentHashMap<>();
+    private final Set<AndroidWordLevelSpellCheckerSession> mActiveSessions =
+            Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     // The threshold for a suggestion to be considered "recommended".
     private float mRecommendedThreshold;
@@ -115,6 +119,45 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
         final SharedPreferences prefs = PreferenceUtils.INSTANCE.getDefaultSharedPreferences(this);
         prefs.registerOnSharedPreferenceChangeListener(this);
         onSharedPreferenceChanged(prefs, PREF_USE_CONTACTS_KEY);
+
+        SpellCheckerObserver.INSTANCE.observe(this, this);
+    }
+
+    public void registerSession(AndroidWordLevelSpellCheckerSession session) {
+        mActiveSessions.add(session);
+    }
+
+    public void unregisterSession(AndroidWordLevelSpellCheckerSession session) {
+        mActiveSessions.remove(session);
+    }
+
+    @Override
+    public void onDictionaryResourceChanged() {
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "[AndroidSpellCheckerService] Dictionary resource changed event received. Reloading dictionaries and clearing caches.");
+        }
+        mSemaphore.acquireUninterruptibly(MAX_NUM_OF_THREADS_READ_DICTIONARY);
+        try {
+            mDictionaryFacilitatorCache.reloadDictionaries();
+        } finally {
+            mSemaphore.release(MAX_NUM_OF_THREADS_READ_DICTIONARY);
+        }
+        mKeyboardCache.clear();
+        for (AndroidWordLevelSpellCheckerSession session : mActiveSessions) {
+            session.clearSuggestionsCache();
+        }
+    }
+
+    @Override
+    public void onLanguageConfigurationChanged() {
+        if (DebugFlags.DEBUG_ENABLED) {
+            Log.i("FUTO_SPELLCHECKER", "[AndroidSpellCheckerService] Language configuration changed event received. Updating active session locales.");
+        }
+        mDictionaryFacilitatorCache.invalidateLocales();
+        mKeyboardCache.clear();
+        for (AndroidWordLevelSpellCheckerSession session : mActiveSessions) {
+            session.refreshLocales();
+        }
     }
 
     public float getRecommendedThreshold() {

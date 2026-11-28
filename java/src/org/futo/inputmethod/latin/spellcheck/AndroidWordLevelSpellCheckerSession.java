@@ -130,13 +130,23 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
      */
     @Override
     public void onCreate() {
+        mService.registerSession(this);
+        refreshLocales();
+    }
+
+    public void refreshLocales() {
         final String localeString = getLocale();
         mLocales = SpellCheckerLanguageManager.INSTANCE.resolveLocales(mService, localeString);
         mLocale = mLocales.isEmpty() ? Locale.ENGLISH : mLocales.get(0);
+        clearSuggestionsCache();
         if (DebugFlags.DEBUG_ENABLED) {
-            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onCreate() session locale: "
+            Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.refreshLocales() session locale: "
                     + localeString + ", resolved locales: " + mLocales);
         }
+    }
+
+    public void clearSuggestionsCache() {
+        mSuggestionsCache.clearCache();
     }
 
     @Override
@@ -144,6 +154,7 @@ public abstract class AndroidWordLevelSpellCheckerSession extends Session {
         if (DebugFlags.DEBUG_ENABLED) {
             Log.i("FUTO_SPELLCHECKER", "AndroidWordLevelSpellCheckerSession.onClose()");
         }
+        mService.unregisterSession(this);
         final ContentResolver cres = mService.getContentResolver();
         cres.unregisterContentObserver(mObserver);
     }
